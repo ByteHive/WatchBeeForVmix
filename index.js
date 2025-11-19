@@ -108,12 +108,12 @@ async function addToVmixPlaylist(filePath) {
 async function removeFromVmixPlaylist(filePath) {
     try {
         const absolutePath = path.resolve(filePath);
-        
+
         const xmlState = await getVmixState();
         if (!xmlState) return;
-        
+
         const fileInfo = findListItems(xmlState, absolutePath);
-        
+
         if (fileInfo) {
             const url = `${config.vmixUrl}/api/?Function=ListRemove&Input=${encodeURIComponent(fileInfo.inputName)}&Value=${fileInfo.index}`;
             await axios.get(url);
@@ -126,24 +126,101 @@ async function removeFromVmixPlaylist(filePath) {
     }
 }
 
+// Helper function to get all items from a VideoList
+function getAllListItems(xmlText, playlistName) {
+    try {
+        // Find the specific VideoList by name
+        const inputRegex = new RegExp(`<input[^>]*title="${playlistName}"[^>]*type="VideoList"[^>]*>[\\s\\S]*?<list>([\\s\\S]*?)<\\/list>`, 'i');
+        const inputMatch = xmlText.match(inputRegex);
+
+        if (!inputMatch) {
+            return [];
+        }
+
+        const listContent = inputMatch[1];
+        const items = listContent.match(/<item[^>]*>(.*?)<\/item>/g);
+
+        if (!items) {
+            return [];
+        }
+
+        // Extract the file paths from items
+        return items.map(item => {
+            const match = item.match(/<item[^>]*>(.*?)<\/item>/);
+            return match ? match[1] : '';
+        }).filter(item => item !== '');
+    } catch (error) {
+        console.error(`Error parsing list items: ${error.message}`);
+        return [];
+    }
+}
+
+// Helper function to sort the VMix playlist alphabetically
+async function sortVmixPlaylist() {
+    try {
+        const xmlState = await getVmixState();
+        if (!xmlState) return;
+
+        // Get all items from the playlist
+        const items = getAllListItems(xmlState, config.playlistName);
+
+        if (items.length === 0) {
+            return;
+        }
+
+        // Sort items alphabetically by filename (not full path)
+        const sortedItems = items.sort((a, b) => {
+            const filenameA = path.basename(a).toLowerCase();
+            const filenameB = path.basename(b).toLowerCase();
+            return filenameA.localeCompare(filenameB);
+        });
+
+        // Check if the list is already sorted
+        const isSorted = items.every((item, index) => item === sortedItems[index]);
+        if (isSorted) {
+            console.log('Playlist is already sorted');
+            return;
+        }
+
+        // Remove all items from the list
+        const removeAllUrl = `${config.vmixUrl}/api/?Function=ListRemoveAll&Input=${encodeURIComponent(config.playlistName)}`;
+        await axios.get(removeAllUrl);
+
+        // Add items back in sorted order
+        for (const item of sortedItems) {
+            const encodedPath = encodeURIComponent(item);
+            const addUrl = `${config.vmixUrl}/api/?Function=ListAdd&Input=${config.playlistName}&Value=${encodedPath}`;
+            await axios.get(addUrl);
+        }
+
+        console.log(`Sorted ${sortedItems.length} items in VMix playlist alphabetically`);
+    } catch (error) {
+        console.error(`Error sorting VMix playlist: ${error.message}`);
+    }
+}
+
 // Watch for file events
 watcher
-    .on('add', path => {
+    .on('add', async path => {
         console.log(`File ${path} has been added`);
-        addToVmixPlaylist(path);
+        await addToVmixPlaylist(path);
+        await sortVmixPlaylist();
     })
-    .on('unlink', path => {
+    .on('unlink', async path => {
         console.log(`File ${path} has been removed`);
-        removeFromVmixPlaylist(path);
+        await removeFromVmixPlaylist(path);
+        await sortVmixPlaylist();
     })
-    .on('change', path => {
+    .on('change', async path => {
         console.log(`File ${path} has been changed`);
-        addToVmixPlaylist(path);
+        await addToVmixPlaylist(path);
+        await sortVmixPlaylist();
     })
-    .on('rename', (oldPath, newPath) => {
+    .on('rename', async (oldPath, newPath) => {
         console.log(`File renamed from ${oldPath} to ${newPath}`);
-        removeFromVmixPlaylist(oldPath);
-        addToVmixPlaylist(newPath);
+        await removeFromVmixPlaylist(oldPath);
+        await addToVmixPlaylist(newPath);
+        await sortVmixPlaylist();
     })
     .on('error', error => {
         console.error(`Watcher error: ${error}`);
