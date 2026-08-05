@@ -1,4 +1,4 @@
-# WatchBee for Vmix
+# WatchBee for vMix
 A lightweight utility that automatically manages vMix playlists by monitoring a folder for file changes. When video files are added, removed, or modified in the watched folder, the tool automatically updates the corresponding vMix playlist.
 
 ## Features
